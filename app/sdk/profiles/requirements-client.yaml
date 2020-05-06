@@ -1,0 +1,12 @@
+# Sample YAML for client config
+name: "Requireents Client"
+version: "1.0"
+client:
+  organization: Requirements
+  credentialStore:
+    path: "./credstore/requirements/hfc-kvs"
+    cryptoStore:
+      path: "./credstore/requirements/hfc-cvs"
+  connection:
+    options:
+      grpc.keepalive_time_ms: 120000
