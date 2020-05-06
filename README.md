@@ -1,2 +1,2 @@
 # blockchain-paper
-Source code for the block chain paper code
+This repository contains the smart contracts built for the block chain paper. 
