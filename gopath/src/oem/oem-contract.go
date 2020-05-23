@@ -27,19 +27,27 @@ func (cc *OEMContract) NewAsset(ctx contractapi.TransactionContextInterface, id 
 		return fmt.Errorf("Asset with id %s, already exists", id)
 	}
 
-	dependents := []*Requirement{}
+	// Create and persist new Content
+	contents := Content{ID: strconv.FormatInt(time.Now().Unix(), 10), Text: text}
+	contentBytes, _ := json.Marshal(contents)
+	ctx.GetStub().PutState(contents.ID, contentBytes)
 
-	ba := new(Requirement)
+	// Create Dependents and persist
+	dependents := Dependents{ID: strconv.FormatInt(time.Now().Unix(), 10), DepIDs: []string{}}
+	dependentBytes, _ := json.Marshal(dependents)
+	ctx.GetStub().PutState(dependents.ID, dependentBytes)
+
+	ba := Requirement{}
 	ba.ID = id
 	ba.Owner = owner
-	ba.Text = text
-	ba.Dependents = dependents
+	ba.ContentID = contents.ID
+	ba.DepID = dependents.ID
 	ba.IsAccessed = false
-	ba.setStatusShared()
+	ba.setInitialStatus()
 
-	// Get the time at sharing the asset in World state
-	shareTime := strconv.FormatInt(time.Now().Unix(), 10)
-	ba.ShareTime = shareTime
+	// Get the time at creating the asset in World state
+	createTime := strconv.FormatInt(time.Now().Unix(), 10)
+	ba.CreateTime = createTime
 
 	// Convert to JSON
 	baBytes, _ := json.Marshal(ba)
@@ -52,7 +60,7 @@ func (cc *OEMContract) NewAsset(ctx contractapi.TransactionContextInterface, id 
 	}
 
 	// Emit the event
-	newAssetPayload := NewAssetPayload{AssetID: ba.ID, TimeShared: shareTime, AccessTime: ""}
+	newAssetPayload := NewAssetPayload{AssetID: ba.ID, CreateTime: createTime}
 	eventPayload, err := json.Marshal(newAssetPayload)
 
 	if err != nil {
@@ -68,8 +76,84 @@ func (cc *OEMContract) NewAsset(ctx contractapi.TransactionContextInterface, id 
 	return nil
 }
 
+// ShareAssetsBulk creates requirements in BULK on peer
+func (cc *OEMContract) ShareAssetsBulk(ctx contractapi.TransactionContextInterface, input []string, owner Owner) error {
+
+	// Call the ShareAsset function for each element of the requirement array
+	for i := 0; i < len(input); i++ {
+
+		depIDs, err := cc.ShareAsset(ctx, input[i], owner)
+		if err != nil {
+			return err
+		}
+
+		// Build the payload
+		shareAssetPayload := ShareAssetPayload{AssetID: input[i], ShareTime: strconv.FormatInt(time.Now().Unix(), 10),
+			Dependents: depIDs}
+
+		eventPayload, err := json.Marshal(shareAssetPayload)
+		if err != nil {
+			return errors.New("Unable to marshal event payload to JSON")
+		}
+
+		// Emit the event
+		err = ctx.GetStub().SetEvent("assetShared", []byte(eventPayload))
+
+		if err != nil {
+			return errors.New("Unable to raise event")
+		}
+	}
+
+	return nil
+}
+
+// ShareAsset shares asset by changing status
+func (cc *OEMContract) ShareAsset(ctx contractapi.TransactionContextInterface, assetID string, owner Owner) ([]string, error) {
+
+	// Get the current asset
+	existing, err := ctx.GetStub().GetState(assetID)
+
+	if err != nil {
+		return nil, errors.New("Unable to interact with the world state")
+	}
+
+	if existing == nil {
+		return nil, fmt.Errorf("Unable to find asset with id %s", assetID)
+	}
+
+	// convert to the BasicAsset
+	req := Requirement{}
+	json.Unmarshal(existing, &req)
+
+	// set new owner
+	req.Owner = owner
+
+	// Update the status
+	req.setStatusShared()
+
+	// Get the time at sharing the asset in World state
+	req.ShareTime = strconv.FormatInt(time.Now().Unix(), 10)
+
+	// Commit back to ledger
+	baBytes, _ := json.Marshal(req)
+	err = ctx.GetStub().PutState(assetID, []byte(baBytes))
+
+	if err != nil {
+		return nil, errors.New("Unable to update the world state")
+	}
+
+	// Return dependents for shared assets
+	existingDep, _ := ctx.GetStub().GetState(req.DepID)
+
+	dependents := Dependents{}
+	json.Unmarshal(existingDep, &dependents)
+
+	return dependents.DepIDs, nil
+}
+
 // CreateDependent using from and to id
-func (cc *OEMContract) CreateDependent(ctx contractapi.TransactionContextInterface, fromID string, toID string) (*Requirement, error) {
+func (cc *OEMContract) CreateDependent(ctx contractapi.TransactionContextInterface, fromID string,
+	toIDs []string) (*Requirement, error) {
 
 	// Get the start end
 	fromEnd, err := ctx.GetStub().GetState(fromID)
@@ -82,17 +166,6 @@ func (cc *OEMContract) CreateDependent(ctx contractapi.TransactionContextInterfa
 		return nil, fmt.Errorf("Unable to find the asset with %s", fromID)
 	}
 
-	// find the to end
-	toEnd, err := ctx.GetStub().GetState(toID)
-
-	if err != nil {
-		return nil, errors.New("Unable to communicate with World state for to end")
-	}
-
-	if toEnd == nil {
-		return nil, fmt.Errorf("Unable to find to end with id %s", toID)
-	}
-
 	// load the start end
 	start := new(Requirement)
 	err = json.Unmarshal(fromEnd, start)
@@ -101,22 +174,22 @@ func (cc *OEMContract) CreateDependent(ctx contractapi.TransactionContextInterfa
 		return nil, errors.New("Unable to load start end from JSON")
 	}
 
-	// load the to end
-	end := new(Requirement)
-	err = json.Unmarshal(toEnd, end)
+	// Pesrsist Dependent to World state
+	dependents := new(Dependents)
+	dependents.ID = strconv.FormatInt(time.Now().Unix(), 10)
+	dependents.DepIDs = toIDs
 
-	if err != nil {
-		return nil, errors.New("Unable to load the end from JSON")
-	}
+	dependentBytes, _ := json.Marshal(dependents)
+	ctx.GetStub().PutState(dependents.ID, dependentBytes)
 
 	// Add the end as dependency on the start
-	start.Dependents = append(start.Dependents, end)
+	start.DepID = dependents.ID
 
 	// convert to JSON
-	startJSON, _ := json.Marshal(start)
+	startBytes, _ := json.Marshal(start)
 
 	// save the start back into world state
-	err = ctx.GetStub().PutState(fromID, []byte(startJSON))
+	err = ctx.GetStub().PutState(fromID, startBytes)
 
 	return start, nil
 }
@@ -139,26 +212,29 @@ func (cc *OEMContract) UpdateValue(ctx contractapi.TransactionContextInterface, 
 	ba := new(Requirement)
 	json.Unmarshal(existing, ba)
 
-	// Update the value
-	ba.Text = newText
+	// Get the contents for this requirement
+	existingContent, _ := ctx.GetStub().GetState(ba.DepID)
+	content := new(Content)
+	json.Unmarshal(existingContent, content)
+
+	// set the new text
+	content.Text = newText
 
 	// Commit back to ledger
-	baBytes, _ := json.Marshal(ba)
-
-	err = ctx.GetStub().PutState(id, []byte(baBytes))
+	contentBytes, _ := json.Marshal(content)
+	err = ctx.GetStub().PutState(content.ID, contentBytes)
 
 	if err != nil {
 		return errors.New("Unable to update the world state")
 	}
 
-	// Go through the dependents and collect their ids
-	depIds := []string{}
-	for _, req := range ba.Dependents {
-		depIds = append(depIds, req.ID)
-	}
+	// Get the dependents
+	dependents := new(Dependents)
+	existingDep, _ := ctx.GetStub().GetState(ba.DepID)
+	json.Unmarshal(existingDep, dependents)
 
 	// Build the payload
-	depPayload := DepEventPayload{SourceID: ba.ID, ListOfDeps: depIds}
+	depPayload := DepEventPayload{SourceID: ba.ID, ListOfDeps: dependents.DepIDs}
 
 	eventPayload, err := json.Marshal(depPayload)
 	if err != nil {
@@ -208,8 +284,8 @@ func (cc *OEMContract) ReadAsset(ctx contractapi.TransactionContextInterface, id
 		}
 
 		// Build the payload
-		assetAccessPayload := NewAssetPayload{AssetID: ba.ID, TimeShared: ba.ShareTime,
-			AccessTime: strconv.FormatInt(time.Now().Unix(), 10)}
+		assetAccessPayload := ReadAssetPayload{AssetID: ba.ID, ShareTime: ba.ShareTime,
+			ReadTime: strconv.FormatInt(time.Now().Unix(), 10)}
 
 		eventPayload, err := json.Marshal(assetAccessPayload)
 
