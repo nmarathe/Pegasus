@@ -1,0 +1,21 @@
+# Sample YAML for client config
+name: "Design Group Client"
+version: "1.0"
+description: "Client section for Design Group"
+
+# Client section describes the client
+client:
+  # Org name
+  organization: designgroup.oem.com
+  # User context storage
+  credentialStore:
+    # State
+    path: "./credstore/designgroup/hfc-kvs"
+    # Public & Private key
+    cryptoStore:
+      path: "./credstore/designgroup/hfc-cvs"
+
+  #GRPC options
+  connection:
+    options:
+      grpc.keepalive_time_ms: 120000
