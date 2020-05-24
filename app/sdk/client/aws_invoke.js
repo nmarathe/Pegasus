@@ -45,13 +45,65 @@ async function main(){
     // Setup the channel instance
     channel = await setupChannel()
 
-    // Invoke the chaincode and create 10 requirements
-    for(var i = 103; i <= 202; i++) {
-        await invokeChaincode("Req-0000" + i )
+    const DATA_FILE_PATH = '../data/Data_128'
+
+    var data = fs.readFileSync(DATA_FILE_PATH)
+
+    var totalSize = 5000
+    var assets = []
+    for(var i = 4504; i <= 9504; i++) {
+        assets.push("Req-1" + i)
     }
+    
+    console.log('# of transactions - ' + totalSize + ' Data size 128 KB')
+    console.log('Transaction start time ' + Math.round((new Date()).getTime() / 1000))
+
+    // for(var i = 4504; i <= 9504; i++) {
+    //     await createAssets("Req-1" + i, data.toString())
+    // }
+
+    // Share assets
+    await shareAssets(assets)
+
+    console.log('Transaction end time ' + Math.round((new Date()).getTime() / 1000))
 }
 
-async function  invokeChaincode(assetID) {
+async function shareAssets(assets) {
+
+    let peerName = channel.getChannelPeer(PEER_NAME)
+
+    var tx_id = client.newTransactionID();
+
+    var request = {
+        targets: peerName,
+        chaincodeId: CHAINCODE_ID,
+        fcn: "ShareAssetsBulk",
+        args: [JSON.stringify(assets),"{\"firstname\":\"Sam\",\"lastname\":\"Designer\"}"],
+        chainId: CHANNEL_NAME,
+        txId: tx_id
+    };
+
+    let results = await channel.sendTransactionProposal(request);
+    // console.log(results)
+
+    // Array of proposal responses *or* error @ index=0
+    var proposalResponses = results[0];
+
+    // Original proposal @ index = 1
+    var proposal = results[1];
+    
+     // Broadcast request
+     var orderer_request = {
+        txId: tx_id,
+        proposalResponses: proposalResponses,
+        proposal: proposal
+    };
+
+    // #4 Request orderer to broadcast the txn
+    await channel.sendTransaction(orderer_request);
+}
+
+async function createAssets(assetID, payload) {
 
     // Get the peer for channel. 
     let peerName = channel.getChannelPeer(PEER_NAME)
@@ -64,19 +116,21 @@ async function  invokeChaincode(assetID) {
     var request = {
         targets: peerName,
         chaincodeId: CHAINCODE_ID,
-        fcn: 'NewAsset',
-        args: [assetID,"{\"firstname\":\"John\",\"lastname\":\"Doe\"}","Sample requirement text for " + assetID],
+        fcn:'NewAsset',
+        args: [assetID,"{\"firstname\":\"John\",\"lastname\":\"Doe\"}",payload],
         chainId: CHANNEL_NAME,
         txId: tx_id
     };
 
     // PHASE-1 of Transaction Flow
     // #1  Send the txn proposal
-    console.log("#1 channel.sendTransactionProposal     Done.")
+    // console.log("Channel.sendTransactionProposal " + assetID + " - Done.")
     let results = await channel.sendTransactionProposal(request);
 
     // Array of proposal responses *or* error @ index=0
     var proposalResponses = results[0];
+
+    // console.log(proposalResponses)
 
     // Original proposal @ index = 1
 	var proposal = results[1];

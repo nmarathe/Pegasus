@@ -45,13 +45,100 @@ async function main(){
     // Setup the channel instance
     channel = await setupChannel()
 
-    // Invoke the chaincode and create 10 requirements
-    for(var i = 11; i <= 20; i++) {
-        await invokeChaincode("Req-0000" + i )
-    }
+    // const DATA_FILE_PATH = '../data/Data_16'
+
+    // var data = fs.readFileSync(DATA_FILE_PATH)
+
+    // console.log('# of transactions - ' + 4 + ' Data size 16 KB')
+
+    // for(var i = 2; i <= 4; i++) {
+    //     await invokeChaincode("Asset-" + i, data.toString())
+    // }
+
+    // // create dependents   
+    // var deps = []
+    // for(var i=2; i <= 4; i++) {
+    //     deps.push("Asset-" + i)
+    // }
+    // await addDependents("Asset-1", deps)
+
+    // Share assets
+    await shareAssets(["Asset-1","Asset-2","Asset-3"])
 }
 
-async function  invokeChaincode(assetID) {
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function shareAssets(assets) {
+
+    let peerName = channel.getChannelPeer(PEER_NAME)
+
+    var tx_id = client.newTransactionID();
+
+    var request = {
+        targets: peerName,
+        chaincodeId: CHAINCODE_ID,
+        fcn: "ShareAssetsBulk",
+        args: [JSON.stringify(assets),"{\"firstname\":\"Sam\",\"lastname\":\"Designer\"}"],
+        chainId: CHANNEL_NAME,
+        txId: tx_id
+    };
+
+    let results = await channel.sendTransactionProposal(request);
+
+    // Array of proposal responses *or* error @ index=0
+    var proposalResponses = results[0];
+
+    // Original proposal @ index = 1
+    var proposal = results[1];
+    
+     // Broadcast request
+     var orderer_request = {
+        txId: tx_id,
+        proposalResponses: proposalResponses,
+        proposal: proposal
+    };
+
+    // #4 Request orderer to broadcast the txn
+    await channel.sendTransaction(orderer_request);
+}
+
+async function addDependents(fromId, toIDs) {
+
+    let peerName = channel.getChannelPeer(PEER_NAME)
+
+    var tx_id = client.newTransactionID();
+
+    var request = {
+        targets: peerName,
+        chaincodeId: CHAINCODE_ID,
+        fcn: "CreateDependent",
+        args: [fromId,JSON.stringify(toIDs)],
+        chainId: CHANNEL_NAME,
+        txId: tx_id
+    };
+
+    let results = await channel.sendTransactionProposal(request);
+
+    // Array of proposal responses *or* error @ index=0
+    var proposalResponses = results[0];
+
+    // Original proposal @ index = 1
+    var proposal = results[1];
+    
+     // Broadcast request
+     var orderer_request = {
+        txId: tx_id,
+        proposalResponses: proposalResponses,
+        proposal: proposal
+    };
+
+    // #4 Request orderer to broadcast the txn
+    await channel.sendTransaction(orderer_request);
+}
+
+async function invokeChaincode(assetID, payload) {
 
     // Get the peer for channel. 
     let peerName = channel.getChannelPeer(PEER_NAME)
@@ -66,7 +153,8 @@ async function  invokeChaincode(assetID) {
         targets: peerName,
         chaincodeId: CHAINCODE_ID,
         fcn: 'NewAsset',
-        args: [assetID,"{\"firstname\":\"John\",\"lastname\":\"Doe\"}","Sample requirement text for " + assetID],
+        args: [assetID,"{\"firstname\":\"John\",\"lastname\":\"Doe\"}",payload],
+        // args:[JSON.stringify(input)],
         chainId: CHANNEL_NAME,
         txId: tx_id
     };
@@ -77,7 +165,7 @@ async function  invokeChaincode(assetID) {
     // Response // https://fabric-sdk-node.github.io/release-1.4/global.html#ChaincodeInvokeRequest
 
     // #1  Send the txn proposal
-    console.log("#1 channel.sendTransactionProposal     Done.")
+    // console.log("#1 channel.sendTransactionProposal     Done.")
     let results = await channel.sendTransactionProposal(request);
 
     // Array of proposal responses *or* error @ index=0
@@ -119,7 +207,7 @@ async function  invokeChaincode(assetID) {
 
     // #4 Request orderer to broadcast the txn
     await channel.sendTransaction(orderer_request);
-    console.log("#4 channel.sendTransaction - waiting for Tx Event")
+    // console.log("#4 channel.sendTransaction - waiting for Tx Event")
 }
 
 
